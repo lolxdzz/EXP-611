@@ -28,14 +28,81 @@ local Config = {
 
 local TargetPlayer = nil
 
--- Função para criar GUI
-local function CreateGUI()
-    -- ScreenGui principal
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "EXP611"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    ScreenGui.Parent = CoreGui
+-- Variáveis globais para conexões
+local ActiveConnections = {}
+local ESPHighlights = {}
+local DraggingConnection = nil
+local OrbitingConnection = nil
+local FollowingConnection = nil
+local SpinningConnection = nil
+local IsSpectating = false
+local ScreenGui = nil
+
+-- Função para desligar o script completamente
+local function ShutdownScript()
+    -- Parar todas as conexões ativas
+    if DraggingConnection then
+        DraggingConnection:Disconnect()
+        DraggingConnection = nil
+    end
+    
+    if OrbitingConnection then
+        OrbitingConnection:Disconnect()
+        OrbitingConnection = nil
+    end
+    
+    if FollowingConnection then
+        FollowingConnection:Disconnect()
+        FollowingConnection = nil
+    end
+    
+    if SpinningConnection then
+        SpinningConnection:Disconnect()
+        SpinningConnection = nil
+    end
+    
+    -- Parar todas as conexões de configurações
+    for name, connection in pairs(ActiveConnections) do
+        if connection then
+            connection:Disconnect()
+        end
+    end
+    ActiveConnections = {}
+    
+    -- Remover todos os ESPs
+    for _, highlight in pairs(ESPHighlights) do
+        if highlight and highlight.Parent then
+            highlight:Destroy()
+        end
+    end
+    ESPHighlights = {}
+    
+    -- Parar visualização
+    if IsSpectating and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        workspace.CurrentCamera.CameraSubject = LocalPlayer.Character.Humanoid
+        IsSpectating = false
+    end
+    
+    -- Destruir a GUI
+    if ScreenGui then
+        ScreenGui:Destroy()
+        ScreenGui = nil
+    end
+    
+    -- Limpar variáveis
+    TargetPlayer = nil
+    
+    print("EXP 611 desligado com sucesso!")
+end
+
+    -- Função para criar GUI
+    local function CreateGUI()
+        -- ScreenGui principal
+        ScreenGui = Instance.new("ScreenGui")
+        ScreenGui.Name = "EXP611"
+        ScreenGui.ResetOnSpawn = false
+        ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        ScreenGui.Parent = CoreGui
 
     -- Frame principal
     local MainFrame = Instance.new("Frame")
@@ -93,7 +160,7 @@ local function CreateGUI()
     CloseButton.Parent = TopBar
 
     CloseButton.MouseButton1Click:Connect(function()
-        ScreenGui:Destroy()
+        ShutdownScript()
     end)
 
     -- Sidebar
@@ -536,42 +603,111 @@ local function CreateGUI()
 
     -- Função para lidar com configurações
     function HandleSetting(setting, enabled)
-        if setting == "AntiAFK" and enabled then
+        if setting == "Anti" and enabled then
+            -- Anti Kick/Ban
+            local mt = getrawmetatable(game)
+            local namecall = mt.__namecall
+            setreadonly(mt, false)
+            mt.__namecall = newcclosure(function(self, ...)
+                local args = {...}
+                if tostring(self) == "Kick" or tostring(self) == "kick" then
+                    return
+                end
+                return namecall(self, ...)
+            end)
+            setreadonly(mt, true)
+        elseif setting == "AntiAFK" and enabled then
             -- Anti AFK
             local VirtualUser = game:GetService("VirtualUser")
-            game:GetService("Players").LocalPlayer.Idled:Connect(function()
+            local connection
+            connection = LocalPlayer.Idled:Connect(function()
                 VirtualUser:CaptureController()
                 VirtualUser:ClickButton2(Vector2.new())
             end)
+            ActiveConnections["AntiAFK"] = connection
+        elseif setting == "AntiAFK" and not enabled then
+            if ActiveConnections["AntiAFK"] then
+                ActiveConnections["AntiAFK"]:Disconnect()
+                ActiveConnections["AntiAFK"] = nil
+            end
+        elseif setting == "AntiEspiao" and enabled then
+            -- Anti Espião (Anti Spectate)
+            local connection
+            connection = workspace.CurrentCamera:GetPropertyChangedSignal("CameraSubject"):Connect(function()
+                if workspace.CurrentCamera.CameraSubject and workspace.CurrentCamera.CameraSubject.Parent then
+                    local subject = workspace.CurrentCamera.CameraSubject.Parent
+                    if subject:FindFirstChild("Humanoid") and subject ~= LocalPlayer.Character then
+                        workspace.CurrentCamera.CameraSubject = LocalPlayer.Character:FindFirstChild("Humanoid")
+                    end
+                end
+            end)
+            ActiveConnections["AntiEspiao"] = connection
+        elseif setting == "AntiEspiao" and not enabled then
+            if ActiveConnections["AntiEspiao"] then
+                ActiveConnections["AntiEspiao"]:Disconnect()
+                ActiveConnections["AntiEspiao"] = nil
+            end
         elseif setting == "Dia" and enabled then
             -- Dia
             game.Lighting.TimeOfDay = "12:00:00"
+            game.Lighting.Brightness = 2
         elseif setting == "Noite" and enabled then
             -- Noite
             game.Lighting.TimeOfDay = "00:00:00"
+            game.Lighting.Brightness = 0.5
         elseif setting == "Shaders" and enabled then
             -- Desabilitar shaders
             for _, descendant in ipairs(game:GetDescendants()) do
-                if descendant:IsA("PostEffect") then
+                if descendant:IsA("PostEffect") or descendant:IsA("BloomEffect") or descendant:IsA("BlurEffect") or descendant:IsA("ColorCorrectionEffect") or descendant:IsA("SunRaysEffect") then
                     descendant.Enabled = false
                 end
             end
+            -- Desabilitar futuros shaders
+            game.DescendantAdded:Connect(function(descendant)
+                if descendant:IsA("PostEffect") or descendant:IsA("BloomEffect") or descendant:IsA("BlurEffect") or descendant:IsA("ColorCorrectionEffect") or descendant:IsA("SunRaysEffect") then
+                    descendant.Enabled = false
+                end
+            end)
         elseif setting == "InfiniteYield" and enabled then
             -- Carregar Infinite Yield
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+            pcall(function()
+                loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+            end)
         elseif setting == "CMDX" and enabled then
             -- Carregar CMD-X
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/CMD-X/CMD-X/master/Source", true))()
+            pcall(function()
+                loadstring(game:HttpGet("https://raw.githubusercontent.com/CMD-X/CMD-X/master/Source", true))()
+            end)
         elseif setting == "ESP" and enabled then
-            -- ESP básico
+            -- ESP para todos os jogadores
             for _, player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character then
                     CreateESP(player.Character)
                 end
             end
+            -- ESP para novos jogadores
+            Players.PlayerAdded:Connect(function(player)
+                player.CharacterAdded:Connect(function(character)
+                    wait(1)
+                    CreateESP(character)
+                end)
+            end)
+        elseif setting == "ESP" and not enabled then
+            -- Remover ESP
+            for _, highlight in pairs(ESPHighlights) do
+                if highlight then
+                    highlight:Destroy()
+                end
+            end
+            ESPHighlights = {}
         elseif setting == "Explodir" and enabled then
-            -- Explodir
+            -- Explodir personagem
             if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local explosion = Instance.new("Explosion")
+                explosion.Position = LocalPlayer.Character.HumanoidRootPart.Position
+                explosion.BlastRadius = 0
+                explosion.BlastPressure = 0
+                explosion.Parent = workspace
                 LocalPlayer.Character.HumanoidRootPart:Destroy()
             end
         elseif setting == "Reentrar" and enabled then
@@ -591,136 +727,288 @@ local function CreateGUI()
         local targetHRP = targetChar:FindFirstChild("HumanoidRootPart")
         local localChar = LocalPlayer.Character
         local localHRP = localChar and localChar:FindFirstChild("HumanoidRootPart")
+        local targetHumanoid = targetChar:FindFirstChild("Humanoid")
 
-        if not targetHRP then return end
+        if not targetHRP then 
+            warn("Alvo não tem HumanoidRootPart!")
+            return 
+        end
 
         if action == "Visualiza" then
-            -- Visualizar
-            if localHRP then
-                local camera = workspace.CurrentCamera
-                camera.CameraSubject = targetChar:FindFirstChild("Humanoid")
+            -- Visualizar (Spectate) - Toggle
+            if IsSpectating then
+                -- Parar de visualizar
+                if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                    workspace.CurrentCamera.CameraSubject = LocalPlayer.Character.Humanoid
+                    IsSpectating = false
+                    warn("Parou de visualizar")
+                end
+            else
+                -- Começar a visualizar
+                if targetHumanoid then
+                    workspace.CurrentCamera.CameraSubject = targetHumanoid
+                    IsSpectating = true
+                    warn("Visualizando " .. TargetPlayer.Name)
+                end
             end
         elseif action == "Bang" then
-            -- Bang
+            -- Bang (Teleportar próximo ao alvo)
             if localHRP then
                 localHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 2)
             end
         elseif action == "Cachorrinho" then
-            -- Cachorrinho (animação)
-            -- Implementar animação de cachorro
-        elseif action == "Girar" then
-            -- Girar
-            if targetHRP then
-                local spin = RunService.Heartbeat:Connect(function()
-                    targetHRP.CFrame = targetHRP.CFrame * CFrame.Angles(0, math.rad(10), 0)
+            -- Cachorrinho (Fazer o alvo andar de quatro)
+            if targetHumanoid then
+                targetHumanoid.PlatformStand = true
+                local angle = 0
+                local connection
+                connection = RunService.Heartbeat:Connect(function()
+                    if targetHRP and targetHRP.Parent then
+                        angle = angle + 0.2
+                        local offset = Vector3.new(0, -2, 0)
+                        targetHRP.CFrame = targetHRP.CFrame * CFrame.Angles(math.rad(90), 0, 0) + offset
+                    else
+                        connection:Disconnect()
+                    end
                 end)
                 wait(3)
-                spin:Disconnect()
+                if connection then connection:Disconnect() end
+                if targetHumanoid then targetHumanoid.PlatformStand = false end
+            end
+        elseif action == "Girar" then
+            -- Girar (Fazer o alvo girar) - Toggle
+            if SpinningConnection then
+                SpinningConnection:Disconnect()
+                SpinningConnection = nil
+                warn("Parou de girar")
+            else
+                SpinningConnection = RunService.Heartbeat:Connect(function()
+                    if targetHRP and targetHRP.Parent then
+                        targetHRP.CFrame = targetHRP.CFrame * CFrame.Angles(0, math.rad(15), 0)
+                    else
+                        if SpinningConnection then
+                            SpinningConnection:Disconnect()
+                            SpinningConnection = nil
+                        end
+                    end
+                end)
+                warn("Começou a girar")
             end
         elseif action == "Trazer" then
-            -- Trazer
+            -- Trazer (Puxar o alvo para você)
             if localHRP and targetHRP then
                 targetHRP.CFrame = localHRP.CFrame * CFrame.new(0, 0, 5)
             end
         elseif action == "Empurra" then
-            -- Empurrar
+            -- Empurrar (Empurrar o alvo para longe)
             if localHRP and targetHRP then
-                targetHRP.CFrame = localHRP.CFrame * CFrame.new(0, 0, -10)
+                local direction = (targetHRP.Position - localHRP.Position).Unit
+                targetHRP.CFrame = targetHRP.CFrame + direction * 10
             end
         elseif action == "Arremessar" then
-            -- Arremessar
+            -- Arremessar (Lançar o alvo para cima)
             if targetHRP then
-                local bodyVelocity = Instance.new("BodyVelocity")
-                bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
-                bodyVelocity.Velocity = Vector3.new(0, 50, 0)
-                bodyVelocity.Parent = targetHRP
-                wait(0.5)
-                bodyVelocity:Destroy()
+                local alignPosition = Instance.new("AlignPosition")
+                alignPosition.MaxForce = 4000
+                alignPosition.Responsiveness = 200
+                alignPosition.Attachment0 = targetHRP:FindFirstChildOfClass("Attachment") or Instance.new("Attachment")
+                if not targetHRP:FindFirstChildOfClass("Attachment") then
+                    alignPosition.Attachment0.Parent = targetHRP
+                end
+                alignPosition.Parent = targetHRP
+                
+                local targetPosition = targetHRP.Position + Vector3.new(0, 50, 0)
+                alignPosition.Position = targetPosition
+                
+                wait(1)
+                alignPosition:Destroy()
             end
         elseif action == "Sentar na Cabeça" then
-            -- Sentar na cabeça
+            -- Sentar na cabeça do alvo
             if localHRP and targetHRP then
-                localHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 3, 0)
+                local head = targetChar:FindFirstChild("Head")
+                if head then
+                    localHRP.CFrame = head.CFrame * CFrame.new(0, 2, 0)
+                else
+                    localHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 3, 0)
+                end
             end
         elseif action == "Mochila" then
-            -- Mochila (abrir inventário)
-            -- Implementar abertura de inventário
+            -- Mochila (Abrir inventário do alvo)
+            if TargetPlayer then
+                local backpack = TargetPlayer:FindFirstChild("Backpack")
+                if backpack then
+                    for _, tool in ipairs(backpack:GetChildren()) do
+                        if tool:IsA("Tool") then
+                            tool.Parent = TargetPlayer.Character
+                            wait(0.1)
+                            tool.Parent = backpack
+                        end
+                    end
+                end
+                -- Tentar abrir o inventário visualmente
+                pcall(function()
+                    game:GetService("StarterGui"):SetCore("SendNotification", {
+                        Title = "Mochila",
+                        Text = "Inventário de " .. TargetPlayer.Name,
+                        Duration = 3
+                    })
+                end)
+            end
         elseif action == "Teleportar" then
-            -- Teleportar
+            -- Teleportar para o alvo
             if localHRP and targetHRP then
                 localHRP.CFrame = targetHRP.CFrame
             end
         elseif action == "Chutar" then
-            -- Chutar
+            -- Chutar (Empurrar o alvo para baixo)
             if targetHRP then
-                local bodyVelocity = Instance.new("BodyVelocity")
-                bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
-                bodyVelocity.Velocity = Vector3.new(0, -50, 0)
-                bodyVelocity.Parent = targetHRP
-                wait(0.3)
-                bodyVelocity:Destroy()
+                local alignPosition = Instance.new("AlignPosition")
+                alignPosition.MaxForce = 4000
+                alignPosition.Responsiveness = 200
+                alignPosition.Attachment0 = targetHRP:FindFirstChildOfClass("Attachment") or Instance.new("Attachment")
+                if not targetHRP:FindFirstChildOfClass("Attachment") then
+                    alignPosition.Attachment0.Parent = targetHRP
+                end
+                alignPosition.Parent = targetHRP
+                
+                local targetPosition = targetHRP.Position - Vector3.new(0, 20, 0)
+                alignPosition.Position = targetPosition
+                
+                wait(0.5)
+                alignPosition:Destroy()
             end
         elseif action == "Focar" then
-            -- Focar
+            -- Focar câmera no alvo
             if localHRP and targetHRP then
                 local camera = workspace.CurrentCamera
                 camera.CFrame = CFrame.new(localHRP.Position, targetHRP.Position)
             end
         elseif action == "Ficar em Pé" then
-            -- Ficar em pé
-            local humanoid = targetChar:FindFirstChild("Humanoid")
-            if humanoid then
-                humanoid.PlatformStand = false
+            -- Ficar em pé (Parar animações/efeitos)
+            if targetHumanoid then
+                targetHumanoid.PlatformStand = false
+            end
+            if SpinningConnection then
+                SpinningConnection:Disconnect()
+                SpinningConnection = nil
+            end
+            if DraggingConnection then
+                DraggingConnection:Disconnect()
+                DraggingConnection = nil
+            end
+            if OrbitingConnection then
+                OrbitingConnection:Disconnect()
+                OrbitingConnection = nil
             end
         elseif action == "Arrastar" then
-            -- Arrastar
-            if localHRP and targetHRP then
-                local connection
-                connection = RunService.Heartbeat:Connect(function()
-                    targetHRP.CFrame = localHRP.CFrame * CFrame.new(0, 0, 3)
-                end)
-                -- Desconectar após 5 segundos
-                wait(5)
-                connection:Disconnect()
+            -- Arrastar (Puxar o alvo continuamente) - Toggle
+            if DraggingConnection then
+                DraggingConnection:Disconnect()
+                DraggingConnection = nil
+                warn("Parou de arrastar")
+            else
+                if localHRP and targetHRP then
+                    DraggingConnection = RunService.Heartbeat:Connect(function()
+                        if targetHRP and targetHRP.Parent and localHRP and localHRP.Parent then
+                            targetHRP.CFrame = localHRP.CFrame * CFrame.new(0, 0, 3)
+                        else
+                            if DraggingConnection then
+                                DraggingConnection:Disconnect()
+                                DraggingConnection = nil
+                            end
+                        end
+                    end)
+                    warn("Começou a arrastar")
+                end
             end
         elseif action == "Orbitar" then
-            -- Orbitar
-            if localHRP and targetHRP then
-                local angle = 0
-                local connection
-                connection = RunService.Heartbeat:Connect(function()
-                    angle = angle + 0.1
-                    local offset = Vector3.new(math.cos(angle) * 5, 0, math.sin(angle) * 5)
-                    localHRP.CFrame = targetHRP.CFrame * CFrame.new(offset)
-                end)
-                wait(5)
-                connection:Disconnect()
+            -- Orbitar ao redor do alvo - Toggle
+            if OrbitingConnection then
+                OrbitingConnection:Disconnect()
+                OrbitingConnection = nil
+                warn("Parou de orbitar")
+            else
+                if localHRP and targetHRP then
+                    local angle = 0
+                    OrbitingConnection = RunService.Heartbeat:Connect(function()
+                        if targetHRP and targetHRP.Parent and localHRP and localHRP.Parent then
+                            angle = angle + 0.1
+                            local offset = Vector3.new(math.cos(angle) * 5, 2, math.sin(angle) * 5)
+                            localHRP.CFrame = targetHRP.CFrame * CFrame.new(offset)
+                        else
+                            if OrbitingConnection then
+                                OrbitingConnection:Disconnect()
+                                OrbitingConnection = nil
+                            end
+                        end
+                    end)
+                    warn("Começou a orbitar")
+                end
             end
         elseif action == "Seguir" then
-            -- Seguir
-            if localHRP and targetHRP then
-                local connection
-                connection = RunService.Heartbeat:Connect(function()
-                    localHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 5)
-                end)
-                wait(10)
-                connection:Disconnect()
+            -- Seguir o alvo - Toggle
+            if FollowingConnection then
+                FollowingConnection:Disconnect()
+                FollowingConnection = nil
+                warn("Parou de seguir")
+            else
+                if localHRP and targetHRP then
+                    FollowingConnection = RunService.Heartbeat:Connect(function()
+                        if targetHRP and targetHRP.Parent and localHRP and localHRP.Parent then
+                            local direction = (targetHRP.Position - localHRP.Position)
+                            local distance = direction.Magnitude
+                            if distance > 5 then
+                                localHRP.CFrame = CFrame.new(localHRP.Position, targetHRP.Position) * CFrame.new(0, 0, -5)
+                            end
+                        else
+                            if FollowingConnection then
+                                FollowingConnection:Disconnect()
+                                FollowingConnection = nil
+                            end
+                        end
+                    end)
+                    warn("Começou a seguir")
+                end
             end
         end
     end
 
     -- Função para criar ESP
     function CreateESP(character)
-        for _, part in ipairs(character:GetChildren()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                local highlight = Instance.new("Highlight")
-                highlight.FillColor = Color3.fromRGB(255, 0, 0)
-                highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                highlight.FillTransparency = 0.5
-                highlight.OutlineTransparency = 0
-                highlight.Parent = part
-            end
-        end
+        if not character then return end
+        
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then return end
+        
+        -- Criar highlight no personagem inteiro
+        local highlight = Instance.new("Highlight")
+        highlight.FillColor = Color3.fromRGB(255, 0, 0)
+        highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        highlight.FillTransparency = 0.5
+        highlight.OutlineTransparency = 0
+        highlight.Adornee = character
+        highlight.Parent = character
+        
+        table.insert(ESPHighlights, highlight)
+        
+        -- Criar label com nome
+        local billboard = Instance.new("BillboardGui")
+        billboard.Size = UDim2.new(0, 200, 0, 50)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.Adornee = humanoidRootPart
+        billboard.Parent = humanoidRootPart
+        
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Size = UDim2.new(1, 0, 1, 0)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = character.Parent.Name
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nameLabel.TextSize = 14
+        nameLabel.Font = Enum.Font.GothamBold
+        nameLabel.Parent = billboard
+        
+        table.insert(ESPHighlights, billboard)
     end
 
     -- Atalho de teclado [B]
